@@ -41,6 +41,7 @@ function Backup {
 
         # Create or clear temporary export folder and export VMs
         if (Test-Path $tempfolder) {
+            Get-VM | Stop-VM -Force
             Remove-Item -Force -Recurse $tempfolder
         }
         mkdir $tempfolder
@@ -181,28 +182,31 @@ function Show-RestoreForm {
     # Function to perform restore from selected folder
     function RestoreFromFolder {
         param ([string]$folderName)
-
+    
         $tempfolder = "C:\hyper-v"
         $selectedFolder = Join-Path $mainbackup $folderName
         $archivePath = Join-Path $selectedFolder "backup.zip"
-
-        if (Test-Path $tempfolder) { Remove-Item -Force -Recurse $tempfolder }
-        mkdir $tempfolder
-        Copy-Item $archivePath $tempfolder
-
+    
         # Stop all VMs
         Get-VM | Stop-VM -Force
         Get-VM | Remove-VM -Force
-        & "C:\Program Files\7-Zip\7z.exe" x "$tempfolder\backup.zip" "-o$tempfolder" -y
 
+
+        if (Test-Path $tempfolder) {Remove-Item -Force -Recurse $tempfolder}
+        mkdir $tempfolder
+
+        Copy-Item $archivePath $tempfolder
+        & "C:\Program Files\7-Zip\7z.exe" x "$tempfolder\backup.zip" "-o$tempfolder" -y
+    
         # Get a list of VM configuration files (*.vmcx) in the Virtual Machines subfolders of the temporary folder
         $VMFiles = Get-ChildItem -Path "$tempfolder\*\Virtual Machines" -Filter *.vmcx -Recurse
-
+    
         # Loop through each VM configuration file and import the VM
-        foreach ($VMFile in $VMFiles) { Import-VM -Path $VMFile.FullName }
-
+        echo "Importing VM-s"
+        foreach ($VMFile in $VMFiles) {Import-VM -Path $VMFile.FullName}
         [System.Windows.Forms.MessageBox]::Show("Restore completed successfully.", "Success", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
     }
+    
 
     # Show the restore form
     [void]$RestoreForm.ShowDialog()
