@@ -1,3 +1,13 @@
+[CmdletBinding()]
+param ([switch]$cli)
+
+# Check if Hyper-V is installed
+$hyperVInstalled = Get-WindowsFeature -Name Hyper-V | Where-Object { $_.Installed }
+if (-not $hyperVInstalled) {
+    Write-Host "Hyper-V is not installed. This script requires Hyper-V to be installed to run."
+    Exit
+}
+
 [void] [System.Reflection.Assembly]::LoadWithPartialName("System.Drawing") 
 [void] [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
 
@@ -17,7 +27,11 @@ function Backup {
 
         if (Test-Path $tempfolder) {
             Remove-Item -Force -Recurse $tempfolder
-            mkdir C:\tempbackup
+            mkdir $tempfolder
+            Export-VM * $tempfolder
+        }
+        else {
+            mkdir $tempfolder
             Export-VM * $tempfolder
         }
     
@@ -70,10 +84,8 @@ function Restore {
         $backupFolders = Get-ChildItem -Path $mainbackup -Directory -ErrorAction SilentlyContinue
         if ($backupFolders.Count -eq 0) {
             [System.Windows.Forms.MessageBox]::Show("Network folder is not accessible or no folders found.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-            return  # Exit the function if no folders found
-        }
-
-        Show-RestoreForm -BackupFolders $backupFolders
+            return
+        } Show-RestoreForm -BackupFolders $backupFolders
     }
 }
 
@@ -124,83 +136,81 @@ function Show-RestoreForm {
     $RestoreForm.Controls.Add($cancelButton)
 
     # Function to perform restore from selected folder
-# Function to perform restore from selected folder
-function RestoreFromFolder {
-    param ([string]$folderName)
+    function RestoreFromFolder {
+        param ([string]$folderName)
 
-    $tempfolder = "C:\hyper-v"
-    $selectedFolder = Join-Path $mainbackup $folderName
-    $archivePath = Join-Path $selectedFolder "backup.zip"
+        $tempfolder = "C:\hyper-v"
+        $selectedFolder = Join-Path $mainbackup $folderName
+        $archivePath = Join-Path $selectedFolder "backup.zip"
 
-    if (Test-Path $tempfolder) {
-        Remove-Item -Force -Recurse $tempfolder
-        mkdir $tempfolder
+        if (Test-Path $tempfolder) {
+            Remove-Item -Force -Recurse $tempfolder
+            mkdir $tempfolder
+        }
+        else { mkdir $tempfolder }
+
+        Copy-Item $archivePath $tempfolder
+        # Stop all VMs
+        Get-VM | Stop-VM -Force
+        Get-VM | Remove-VM -Force
+        & "C:\Program Files\7-Zip\7z.exe" x "$tempfolder\backup.zip" "-o$tempfolder" -y
+
+        # Get a list of VM configuration files (*.vmcx) in the Virtual Machines subfolders of the temporary folder
+        $VMFiles = Get-ChildItem -Path "$tempfolder\*\Virtual Machines" -Filter *.vmcx -Recurse
+
+        # Loop through each VM configuration file and import the VM
+        foreach ($VMFile in $VMFiles) { Import-VM -Path $VMFile.FullName }
+
+        [System.Windows.Forms.MessageBox]::Show("Restore completed successfully.", "Success", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
     }
-    else { mkdir $tempfolder }
-
-    Copy-Item $archivePath $tempfolder
-    # Stop all VMs
-    Get-VM | Stop-VM -Force
-    Get-VM | Remove-VM -Force
-    & "C:\Program Files\7-Zip\7z.exe" x "$tempfolder\backup.zip" "-o$tempfolder" -y
-
-    # Get a list of VM configuration files (*.vmcx) in the Virtual Machines subfolders of the temporary folder
-    $VMFiles = Get-ChildItem -Path "$tempfolder\*\Virtual Machines" -Filter *.vmcx -Recurse
-
-    # Loop through each VM configuration file and import the VM
-    foreach ($VMFile in $VMFiles) {
-        Import-VM -Path $VMFile.FullName
-    }
-
-    [System.Windows.Forms.MessageBox]::Show("Restore completed successfully.", "Success", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
-}
-
-    
     # Show the restore form
     [void]$RestoreForm.ShowDialog()
 }
 
+# If running from CLI with `-cli` flag, run only the backup function
+if ($cli) { Backup }
+else {
+    $App = New-Object System.Windows.Forms.Form
+    $App.StartPosition = "CenterScreen"
+    $App.Size = "500,500"
+    $App.FormBorderStyle = 'Fixed3D'
+    $App.MinimizeBox = $true
+    $App.MaximizeBox = $false
+    $App.Text = "Nigeria prince toolbox"
 
-$App = New-Object System.Windows.Forms.Form
-$App.StartPosition = "CenterScreen"
-$App.Size = "500,500"
-$App.FormBorderStyle = 'Fixed3D'
-$App.MinimizeBox = $true
-$App.MaximizeBox = $false
-$App.Text = "Nigeria prince toolbox"
+    # label
+    $label = New-Object System.Windows.Forms.Label
+    $label.Location = New-Object System.Drawing.Point(20, 10)
+    $label.Font = New-Object System.Drawing.Font('verdana', 16)
+    $label.AutoSize = $true
+    $label.ForeColor = "#000000"
+    $label.Text = ("Hyper-V Backup")
+    $App.Controls.Add($label)
 
-# label
-$label = New-Object System.Windows.Forms.Label
-$label.Location = New-Object System.Drawing.Point(20, 10)
-$label.Font = New-Object System.Drawing.Font('verdana', 16)
-$label.AutoSize = $true
-$label.ForeColor = "#000000"
-$label.Text = ("Hyper-V Backup")
-$App.Controls.Add($label)
+    # Button a
+    $backup_button = New-Object System.Windows.Forms.Button
+    $backup_button.Location = New-Object System.Drawing.Point(20, 100)
+    $backup_button.Size = New-Object System.Drawing.Size(100, 25)
+    $backup_button.Text = "BACKUP"
+    $backup_button.Add_Click({ & { Backup } })
+    $App.Controls.Add($backup_button)
 
-# Button a
-$backup_button = New-Object System.Windows.Forms.Button
-$backup_button.Location = New-Object System.Drawing.Point(20, 100)
-$backup_button.Size = New-Object System.Drawing.Size(100, 25)
-$backup_button.Text = "BACKUP"
-$backup_button.Add_Click({ & { Backup } })
-$App.Controls.Add($backup_button)
+    # Button b
+    $restore_button = New-Object System.Windows.Forms.Button
+    $restore_button.Location = New-Object System.Drawing.Point(120, 100)
+    $restore_button.Size = New-Object System.Drawing.Size(100, 25)
+    $restore_button.Text = "RESTORE"
+    $restore_button.Add_Click({ & { Restore -networkFolderPath $networkFolderPath -tempfolder $tempfolder } })
+    $App.Controls.Add($restore_button)
 
-# Button b
-$restore_button = New-Object System.Windows.Forms.Button
-$restore_button.Location = New-Object System.Drawing.Point(120, 100)
-$restore_button.Size = New-Object System.Drawing.Size(100, 25)
-$restore_button.Text = "RESTORE"
-$restore_button.Add_Click({ & { Restore -networkFolderPath $networkFolderPath -tempfolder $tempfolder } })
-$App.Controls.Add($restore_button)
+    # Button c
+    $browse_button = New-Object System.Windows.Forms.Button
+    $browse_button.Location = New-Object System.Drawing.Point(75, 125)
+    $browse_button.Size = New-Object System.Drawing.Size(100, 25)
+    $browse_button.Text = "Backup Location"
+    $browse_button.Add_Click({ explorer.exe $networkFolderPath })
+    $App.Controls.Add($browse_button)
 
-# Button c
-$browse_button = New-Object System.Windows.Forms.Button
-$browse_button.Location = New-Object System.Drawing.Point(75, 125)
-$browse_button.Size = New-Object System.Drawing.Size(100, 25)
-$browse_button.Text = "Backup Location"
-$browse_button.Add_Click({ explorer.exe $networkFolderPath })
-$App.Controls.Add($browse_button)
-
-$App.Add_Shown({ $App.Activate() })
-[void] $App.ShowDialog()
+    $App.Add_Shown({ $App.Activate() })
+    [void] $App.ShowDialog()
+}
