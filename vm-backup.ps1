@@ -1,64 +1,86 @@
-[CmdletBinding()]
-param ([switch]$cli)
 
-# Check if Hyper-V is installed
+# Define CmdletBinding attribute to enable advanced cmdlet features
+[CmdletBinding()]
+
+# Define script parameters
+param (
+    [switch]$cli # Define a switch parameter to indicate if script is running from CLI
+)
+
+# Check if Hyper-V feature is installed
 $hyperVInstalled = Get-WindowsFeature -Name Hyper-V | Where-Object { $_.Installed }
 if (-not $hyperVInstalled) {
     Write-Host "Hyper-V is not installed. This script requires Hyper-V to be installed to run."
-    Exit
+    Exit # Exit script if Hyper-V is not installed
 }
 
-[void] [System.Reflection.Assembly]::LoadWithPartialName("System.Drawing") 
+# Load necessary assemblies for PowerShell Forms
+[void] [System.Reflection.Assembly]::LoadWithPartialName("System.Drawing")
 [void] [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
 
-# Variables
+# Define network folder path for backup
 $networkFolderPath = "\\192.168.10.198\f\testing"
 
-function Backup {
-    $tempfolder = "C:\tempbackup"
-    $networkFolderPath = "\\192.168.10.198\f\testing"
-    $mainBackupFolderPath = Join-Path $networkFolderPath "MainBackup"
-    $dateFolderPath = Join-Path $mainBackupFolderPath (Get-Date -Format "yyyy-MM-dd_HH-mm-ss")
+# Define temporary folder path for backup
+$tempfolder = "C:\tempbackup"
 
+
+# Define backup function
+function Backup {
+
+    # Define temporary folder for backup
+    $tempfolder = "C:\tempbackup"
+
+    # Check if network folder path is accessible
     if (Test-Path $networkFolderPath) {
+
+        # Stop all virtual machines
         Write-Host "Backup script started"
-        write-host "Stopping all Virtual Machines"
+        Write-Host "Stopping all Virtual Machines"
         Get-VM | Stop-VM -Force
 
+        # Create or clear temporary export folder and export VMs
         if (Test-Path $tempfolder) {
             Remove-Item -Force -Recurse $tempfolder
-            mkdir $tempfolder
-            Export-VM * $tempfolder
         }
-        else {
-            mkdir $tempfolder
-            Export-VM * $tempfolder
-        }
-    
+        mkdir $tempfolder
+        Export-VM * $tempfolder
+
+        # Zip exported VMs
         $archivePath = Join-Path $tempfolder "backup.zip"
         & "C:\Program Files\7-Zip\7z.exe" a -tzip $archivePath $tempfolder\*
 
+        # Hash the zip archive
         $archiveHash = Get-FileHash -Path $archivePath -Algorithm SHA256
 
+        # Create main backup folder if it doesn't exist
+        $mainBackupFolderPath = Join-Path $networkFolderPath "MainBackup"
         if (-not (Test-Path $mainBackupFolderPath)) {
-            Write-Host "Making main backup folder"
             New-Item -ItemType Directory -Path $mainBackupFolderPath | Out-Null
-            Write-Host "Main backup folder created."
         }
-        else { Write-Host "Main backup folder already exists." }
+
+        # Create folder with current date and time
+        $dateFolderPath = Join-Path $mainBackupFolderPath (Get-Date -Format "yyyy-MM-dd_HH-mm-ss")
         if (-not (Test-Path $dateFolderPath)) {
             New-Item -ItemType Directory -Path $dateFolderPath | Out-Null
-            Write-Host "$dateFolderPath folder created."
         }
-        else { Write-Host "$dateFolderPath folder already exists." }
 
+        # Copy archive to folder with current date and time
         Copy-Item -Path $archivePath -Destination $dateFolderPath -Force -Verbose
         Write-Host "Archive copied to $networkFolderPath."
 
+        # Hash the copied archive
         $copiedArchiveHash = Get-FileHash -Path (Join-Path $dateFolderPath "backup.zip") -Algorithm SHA256
-        if ($copiedArchiveHash.Hash -eq $archiveHash.Hash) { Write-Host "File integrity check passed for the archive." }
-        else { Write-Host "File integrity check failed for the archive." }
 
+        # Compare hashes
+        if ($copiedArchiveHash.Hash -eq $archiveHash.Hash) {
+            Write-Host "File integrity check passed for the archive."
+        }
+        else {
+            Write-Host "File integrity check failed for the archive."
+        }
+
+        # Remove oldest backup if there are more than 5 backups
         Remove-Item -Path $archivePath -Force
         $folders = Get-ChildItem -Path $mainBackupFolderPath -Directory
         if ($folders.Count -gt 5) {
@@ -66,29 +88,42 @@ function Backup {
             Write-Host "Deleting the oldest folder: $($oldestFolder.Name)"
             Remove-Item -Path $oldestFolder.FullName -Recurse -Force
         }
-        else { Write-Host "There are 5 or fewer folders in MainBackup. No action taken." }
+        else {
+            Write-Host "There are 5 or fewer folders in MainBackup. No action taken."
+        }
     }
-    else { Write-Host "Network folder is not accessible." }
+    else {
+        Write-Host "Network folder is not accessible."
+    }
 }
 
+# Define restore function
 function Restore {
+    
+    # Define network folder path for backup
     $networkFolderPath = "\\192.168.10.198\f\testing"
+
+    # Prompt user to confirm restore action
     $confirm = [System.Windows.Forms.MessageBox]::Show(
         "This will STOP all running VMs, DELETE existing VMs, and RESTORE from a backup. Continue?",
         "Restore Confirmation",
         [System.Windows.Forms.MessageBoxButtons]::YesNo,
         [System.Windows.Forms.MessageBoxIcon]::Warning
     )
+
+    # If user confirms, proceed with restore
     if ($confirm -eq "Yes") {
         $mainbackup = Join-Path $networkFolderPath "MainBackup"
         $backupFolders = Get-ChildItem -Path $mainbackup -Directory -ErrorAction SilentlyContinue
         if ($backupFolders.Count -eq 0) {
             [System.Windows.Forms.MessageBox]::Show("Network folder is not accessible or no folders found.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
             return
-        } Show-RestoreForm -BackupFolders $backupFolders
+        } 
+        Show-RestoreForm -BackupFolders $backupFolders
     }
 }
 
+# Define function to display restore form
 function Show-RestoreForm {
     param ([System.IO.DirectoryInfo[]]$BackupFolders)
 
@@ -98,6 +133,7 @@ function Show-RestoreForm {
     $RestoreForm.Size = "400,300"
     $RestoreForm.FormBorderStyle = 'FixedDialog'
     $RestoreForm.MaximizeBox = $false
+    $RestoreForm.BackColor = [System.Drawing.Color]::FromArgb(31, 31, 31)
     $RestoreForm.Text = "Restore from Backup"
 
     # Label
@@ -105,12 +141,15 @@ function Show-RestoreForm {
     $label.Location = New-Object System.Drawing.Point(20, 10)
     $label.Size = New-Object System.Drawing.Size(300, 20)
     $label.Text = "Select a backup to restore:"
+    $label.ForeColor = [System.Drawing.Color]::White
     $RestoreForm.Controls.Add($label)
 
     # ListBox to display available backup folders
     $listBox = New-Object System.Windows.Forms.ListBox
     $listBox.Location = New-Object System.Drawing.Point(20, 40)
     $listBox.Size = New-Object System.Drawing.Size(300, 150)
+    $listBox.BackColor = [System.Drawing.Color]::FromArgb(51, 51, 51)
+    $listBox.ForeColor = [System.Drawing.Color]::White
     foreach ($folder in $BackupFolders) { $listBox.Items.Add($folder.Name) }
     $RestoreForm.Controls.Add($listBox)
 
@@ -119,6 +158,8 @@ function Show-RestoreForm {
     $okButton.Location = New-Object System.Drawing.Point(150, 200)
     $okButton.Size = New-Object System.Drawing.Size(75, 25)
     $okButton.Text = "OK"
+    $okButton.BackColor = [System.Drawing.Color]::FromArgb(51, 51, 51)
+    $okButton.ForeColor = [System.Drawing.Color]::White
     $okButton.Add_Click({
             $selectedFolder = $listBox.SelectedItem
             if ($selectedFolder) { RestoreFromFolder -folderName $selectedFolder }
@@ -132,6 +173,8 @@ function Show-RestoreForm {
     $cancelButton.Location = New-Object System.Drawing.Point(250, 200)
     $cancelButton.Size = New-Object System.Drawing.Size(75, 25)
     $cancelButton.Text = "Cancel"
+    $cancelButton.BackColor = [System.Drawing.Color]::FromArgb(51, 51, 51)
+    $cancelButton.ForeColor = [System.Drawing.Color]::White
     $cancelButton.Add_Click({ $RestoreForm.Close() })
     $RestoreForm.Controls.Add($cancelButton)
 
@@ -143,13 +186,10 @@ function Show-RestoreForm {
         $selectedFolder = Join-Path $mainbackup $folderName
         $archivePath = Join-Path $selectedFolder "backup.zip"
 
-        if (Test-Path $tempfolder) {
-            Remove-Item -Force -Recurse $tempfolder
-            mkdir $tempfolder
-        }
-        else { mkdir $tempfolder }
-
+        if (Test-Path $tempfolder) { Remove-Item -Force -Recurse $tempfolder }
+        mkdir $tempfolder
         Copy-Item $archivePath $tempfolder
+
         # Stop all VMs
         Get-VM | Stop-VM -Force
         Get-VM | Remove-VM -Force
@@ -163,6 +203,7 @@ function Show-RestoreForm {
 
         [System.Windows.Forms.MessageBox]::Show("Restore completed successfully.", "Success", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
     }
+
     # Show the restore form
     [void]$RestoreForm.ShowDialog()
 }
@@ -170,47 +211,66 @@ function Show-RestoreForm {
 # If running from CLI with `-cli` flag, run only the backup function
 if ($cli) { Backup }
 else {
+    # Create main application form
     $App = New-Object System.Windows.Forms.Form
     $App.StartPosition = "CenterScreen"
-    $App.Size = "500,500"
+    $App.Size = "270,260"
     $App.FormBorderStyle = 'Fixed3D'
-    $App.MinimizeBox = $true
+    $App.MinimizeBox = $false
     $App.MaximizeBox = $false
-    $App.Text = "Nigeria prince toolbox"
+    $App.BackColor = [System.Drawing.Color]::FromArgb(31, 31, 31)
+    $App.Text = "Hyper-V Backup" # Set application title
 
-    # label
+    # Label
     $label = New-Object System.Windows.Forms.Label
-    $label.Location = New-Object System.Drawing.Point(20, 10)
+    $label.Location = New-Object System.Drawing.Point(25, 25)
     $label.Font = New-Object System.Drawing.Font('verdana', 16)
     $label.AutoSize = $true
-    $label.ForeColor = "#000000"
-    $label.Text = ("Hyper-V Backup")
+    $label.ForeColor = [System.Drawing.Color]::White
+    $label.Text = "Hyper-V Backup" # Set label text
     $App.Controls.Add($label)
 
-    # Button a
+    # Backup Button
     $backup_button = New-Object System.Windows.Forms.Button
-    $backup_button.Location = New-Object System.Drawing.Point(20, 100)
-    $backup_button.Size = New-Object System.Drawing.Size(100, 25)
-    $backup_button.Text = "BACKUP"
-    $backup_button.Add_Click({ & { Backup } })
+    $backup_button.Location = New-Object System.Drawing.Point(25, 100)
+    $backup_button.Size = New-Object System.Drawing.Size(200, 25)
+    $backup_button.Text = "BACKUP" # Set button text
+    $backup_button.BackColor = [System.Drawing.Color]::FromArgb(51, 51, 51)
+    $backup_button.ForeColor = [System.Drawing.Color]::White
+    $backup_button.Add_Click({ & { Backup } }) # Define button click action
     $App.Controls.Add($backup_button)
 
-    # Button b
+    # Restore Button
     $restore_button = New-Object System.Windows.Forms.Button
-    $restore_button.Location = New-Object System.Drawing.Point(120, 100)
-    $restore_button.Size = New-Object System.Drawing.Size(100, 25)
-    $restore_button.Text = "RESTORE"
-    $restore_button.Add_Click({ & { Restore -networkFolderPath $networkFolderPath -tempfolder $tempfolder } })
+    $restore_button.Location = New-Object System.Drawing.Point(25, 125)
+    $restore_button.Size = New-Object System.Drawing.Size(200, 25)
+    $restore_button.Text = "RESTORE" # Set button text
+    $restore_button.BackColor = [System.Drawing.Color]::FromArgb(51, 51, 51)
+    $restore_button.ForeColor = [System.Drawing.Color]::White
+    $restore_button.Add_Click({ & { Restore } }) # Define button click action
     $App.Controls.Add($restore_button)
 
-    # Button c
+    # Browse Button
     $browse_button = New-Object System.Windows.Forms.Button
-    $browse_button.Location = New-Object System.Drawing.Point(75, 125)
-    $browse_button.Size = New-Object System.Drawing.Size(100, 25)
-    $browse_button.Text = "Backup Location"
-    $browse_button.Add_Click({ explorer.exe $networkFolderPath })
+    $browse_button.Location = New-Object System.Drawing.Point(25, 150)
+    $browse_button.Size = New-Object System.Drawing.Size(200, 25)
+    $browse_button.Text = "BROWSE BACKUPS" # Set button text
+    $browse_button.BackColor = [System.Drawing.Color]::FromArgb(51, 51, 51)
+    $browse_button.ForeColor = [System.Drawing.Color]::White
+    $browse_button.Add_Click({ explorer.exe $networkFolderPath }) # Define button click action
     $App.Controls.Add($browse_button)
 
+    # Browse Button
+    $browse_button2 = New-Object System.Windows.Forms.Button
+    $browse_button2.Location = New-Object System.Drawing.Point(25, 175)
+    $browse_button2.Size = New-Object System.Drawing.Size(200, 25)
+    $browse_button2.Text = "BROWSE TEMPORARY FILES" # Set button text
+    $browse_button2.BackColor = [System.Drawing.Color]::FromArgb(51, 51, 51)
+    $browse_button2.ForeColor = [System.Drawing.Color]::White
+    $browse_button2.Add_Click({ explorer.exe $tempfolder }) # Define button click action
+    $App.Controls.Add($browse_button2)
+
+    # Show the application form
     $App.Add_Shown({ $App.Activate() })
     [void] $App.ShowDialog()
 }
