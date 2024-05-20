@@ -62,13 +62,6 @@ if (Test-Path $networkFolderPath) {
         Write-Host "Deleting the oldest folder: $($oldestFolder.Name)"
         Remove-Item -Path $oldestFolder.FullName -Recurse -Force
     }
-    else {
-        Write-Host "There are 5 or fewer folders in MainBackup. No action taken."
-    }
-
-
-
-
-
+    else {Write-Host "There are 5 or fewer folders in MainBackup. No action taken."}
 }
 else { Write-Host "Network folder is not accessible." }
